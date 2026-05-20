@@ -1,52 +1,64 @@
-
-'use client';
-
-import { useEffect, useMemo, useState } from 'react';
-
-const MONTHS = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
-
-async function api(path, options = {}) {
-  const res = await fetch(`/api/${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
-    },
-    credentials: 'include'
-  });
-
-  const data = await res.json().catch(() => ({}));
-
-  if (!res.ok) {
-    throw new Error(data.error || 'Error');
-  }
-
-  return data;
-}
-
 export default function PagosPage() {
-  const now = new Date();
+  return (
+    <div className="p-6">
+      <h1 className="text-3xl font-bold mb-6">Pagos</h1>
 
-  const [players, setPlayers] = useState([]);
-  const [payments, setPayments] = useState([]);
-  const [loading, setLoading] = useState(true);
+      <div className="bg-white rounded-xl shadow p-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-  const [form, setForm] = useState({
-    player_id: '',
-    concept: 'Mensualidad',
-    amount: 500,
-    payment_method: 'Efectivo',
-    notes: '',
-  });
+          <div>
+            <label className="block mb-2 font-medium">
+              Jugador
+            </label>
 
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [year, setYear] = useState(now.getFullYear());
+            <select className="w-full border rounded-lg p-3">
+              <option>Seleccionar jugador</option>
+            </select>
+          </div>
 
-  async function loadData() {
-    try {
-      setLoading(true);
+          <div>
+            <label className="block mb-2 font-medium">
+              Concepto
+            </label>
 
-      const [playersData, paymentsData] = await Promise.all([
-        api('players'),
-        api(`payments?month=${month}&year=${year}`)
-      ]);
+            <select className="w-full border rounded-lg p-3">
+              <option>Mensualidad</option>
+              <option>Arbitraje</option>
+              <option>Transporte</option>
+              <option>Uniforme</option>
+              <option>Torneo</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block mb-2 font-medium">
+              Monto
+            </label>
+
+            <input
+              type="number"
+              className="w-full border rounded-lg p-3"
+              placeholder="500"
+            />
+          </div>
+
+          <div>
+            <label className="block mb-2 font-medium">
+              Método de pago
+            </label>
+
+            <select className="w-full border rounded-lg p-3">
+              <option>Efectivo</option>
+              <option>Transferencia</option>
+            </select>
+          </div>
+
+        </div>
+
+        <button className="mt-6 bg-green-600 text-white px-6 py-3 rounded-lg">
+          Guardar pago
+        </button>
+      </div>
+    </div>
+  )
+}

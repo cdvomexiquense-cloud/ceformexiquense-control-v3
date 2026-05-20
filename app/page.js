@@ -520,71 +520,281 @@ function PaymentsView() {
   const [year, setYear] = useState(now.getFullYear());
   const [status, setStatus] = useState('all');
   const [payments, setPayments] = useState([]);
+  const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    mode: 'payment',
+    player_id: '',
+    concept: 'Mensualidad',
+    amount: 500,
+    payment_method: 'Efectivo',
+    account: 'Ale',
+    notes: '',
+    months: [String(now.getMonth() + 1)],
+  });
+
+  const accountOptions = form.payment_method === 'Transferencia'
+    ? ['Beto BBVA', 'Ale MercadoPago', 'Tere Banorte']
+    : ['Ale', 'Tere', 'Beto'];
+
+  const getPlayerFee = (player) => {
+    if (!player) return 0;
+    if (player.monthly_fee_override !== null && player.monthly_fee_override !== undefined && player.monthly_fee_override !== '') {
+      return Number(player.monthly_fee_override) || 0;
+    }
+    return Number(player.category?.monthly_fee) || 0;
+  };
+
+  const getPaymentExpected = (payment) => Number(payment.expected_amount ?? payment.amount ?? 0);
+  const getPaymentPaid = (payment) => payment.status === 'pending' ? 0 : Number(payment.amount || 0);
+  const getPaymentPending = (payment) => Math.max(0, getPaymentExpected(payment) - getPaymentPaid(payment));
 
   const load = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ month: String(month), year: String(year) });
+      const params = new URLSearchParams({ year: String(year) });
+      if (month !== 'all') params.set('month', String(month));
       if (status !== 'all') params.set('status', status);
-      const data = await api(`payments?${params.toString()}`);
-      setPayments(data);
+      const [playersData, paymentsData] = await Promise.all([
+        api('players'),
+        api(`payments?${params.toString()}`),
+      ]);
+      setPlayers(playersData);
+      setPayments(paymentsData);
+      if (!form.player_id && playersData[0]?.id) {
+        setForm((f) => ({ ...f, player_id: playersData[0].id }));
+      }
     } catch (e) { toast.error(e.message); }
     finally { setLoading(false); }
   };
   useEffect(() => { load(); }, [month, year, status]);
 
+  const selectedPlayer = players.find((p) => p.id === form.player_id);
+  const selectedMonths = form.months?.length ? form.months.map(Number) : [Number(month) || now.getMonth() + 1];
+
+  const toggleMonth = (value) => {
+    setForm((f) => {
+      const exists = f.months.includes(String(value));
+      const months = exists ? f.months.filter((m) => m !== String(value)) : [...f.months, String(value)];
+      return { ...f, months: months.length ? months : [String(value)] };
+    });
+  };
+
+  const saveManual = async () => {
+    if (!form.player_id) return toast.error('Selecciona un jugador');
+    if (!form.amount || Number(form.amount) <= 0) return toast.error('Captura un monto válido');
+    setSaving(true);
+    try {
+      const totalAmount = Number(form.amount) || 0;
+      const amountPerMonth = totalAmount / selectedMonths.length;
+      const fee = getPlayerFee(selectedPlayer);
+
+      for (const m of selectedMonths) {
+        const expected = form.concept === 'Mensualidad' ? fee : amountPerMonth;
+        const statusAuto = form.mode === 'charge'
+          ? 'pending'
+          : (form.concept === 'Mensualidad' && fee > 0 && amountPerMonth < fee ? 'partial' : 'paid');
+
+        await api('payments', {
+          method: 'POST',
+          body: JSON.stringify({
+            player_id: form.player_id,
+            concept: form.concept,
+            month: m,
+            year,
+            amount: Number(amountPerMonth.toFixed(2)),
+            expected_amount: Number((expected || amountPerMonth).toFixed(2)),
+            status: statusAuto,
+            payment_method: form.mode === 'charge' ? '' : form.payment_method,
+            account: form.mode === 'charge' ? '' : form.account,
+            notes: form.notes,
+          }),
+        });
+      }
+
+      toast.success(form.mode === 'charge' ? 'Cargo pendiente creado' : 'Pago registrado');
+      setForm((f) => ({ ...f, amount: selectedPlayer ? getPlayerFee(selectedPlayer) || 500 : 500, notes: '' }));
+      load();
+    } catch (e) { toast.error(e.message); }
+    finally { setSaving(false); }
+  };
+
   const generate = async () => {
     try {
-      const r = await api('payments/generate', { method: 'POST', body: JSON.stringify({ month, year }) });
-      toast.success(`Generados ${r.created} pagos pendientes (${r.skipped} ya existían)`);
+      const r = await api('payments/generate', { method: 'POST', body: JSON.stringify({ month: Number(month) || now.getMonth() + 1, year }) });
+      toast.success(`Generados ${r.created} cargos pendientes (${r.skipped} ya existían)`);
       load();
     } catch (e) { toast.error(e.message); }
   };
 
-  const togglePaid = async (p) => {
+  const markPaid = async (p) => {
     try {
-      const newStatus = p.status === 'paid' ? 'pending' : 'paid';
-      await api(`payments/${p.id}`, { method: 'PUT', body: JSON.stringify({ status: newStatus, payment_method: newStatus === 'paid' ? 'efectivo' : '' }) });
-      toast.success(newStatus === 'paid' ? 'Marcado como pagado' : 'Marcado como pendiente');
+      await api(`payments/${p.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          status: 'paid',
+          amount: getPaymentExpected(p),
+          payment_method: p.payment_method || 'Efectivo',
+          account: p.account || 'Ale',
+        }),
+      });
+      toast.success('Marcado como pagado');
       load();
     } catch (e) { toast.error(e.message); }
   };
+
+  const markPending = async (p) => {
+    try {
+      await api(`payments/${p.id}`, { method: 'PUT', body: JSON.stringify({ status: 'pending', amount: getPaymentExpected(p), payment_method: '', account: '' }) });
+      toast.success('Marcado como pendiente');
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
   const remove = async (id) => {
-    if (!confirm('¿Eliminar este pago?')) return;
+    if (!confirm('¿Eliminar este movimiento?')) return;
     try { await api(`payments/${id}`, { method: 'DELETE' }); toast.success('Eliminado'); load(); }
     catch (e) { toast.error(e.message); }
   };
 
   const totals = useMemo(() => {
-    const collected = payments.filter((p) => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0);
-    const pending = payments.filter((p) => p.status === 'pending').reduce((s, p) => s + (p.amount || 0), 0);
+    const collected = payments.reduce((s, p) => s + getPaymentPaid(p), 0);
+    const pending = payments.reduce((s, p) => s + getPaymentPending(p), 0);
     return { collected, pending, total: collected + pending };
   }, [payments]);
+
+  useEffect(() => {
+    const p = players.find((x) => x.id === form.player_id);
+    if (p && form.concept === 'Mensualidad') {
+      const fee = getPlayerFee(p);
+      if (fee) setForm((f) => ({ ...f, amount: fee }));
+    }
+  }, [form.player_id, form.concept, players]);
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold">Pagos</h2>
-          <p className="text-muted-foreground text-sm">Control de cobros mensuales</p>
+          <h2 className="text-2xl font-bold">Pagos y cargos</h2>
+          <p className="text-muted-foreground text-sm">Registro manual CEFOR: mensualidad, arbitraje, transporte, uniforme, torneo e inscripción</p>
         </div>
-        <Button onClick={generate} className="bg-emerald-600 hover:bg-emerald-700"><Plus className="w-4 h-4 mr-2" />Generar mensualidad</Button>
+        <Button onClick={generate} variant="outline"><Plus className="w-4 h-4 mr-2" />Generar mensualidad del mes</Button>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Nuevo movimiento</CardTitle>
+          <CardDescription>Registra pagos reales o crea cargos pendientes por jugador.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <Label>Tipo de movimiento</Label>
+              <Select value={form.mode} onValueChange={(v) => setForm({ ...form, mode: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="payment">Pago recibido</SelectItem>
+                  <SelectItem value="charge">Cargo pendiente</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2 md:col-span-2">
+              <Label>Jugador</Label>
+              <Select value={form.player_id} onValueChange={(v) => setForm({ ...form, player_id: v })}>
+                <SelectTrigger><SelectValue placeholder="Selecciona jugador" /></SelectTrigger>
+                <SelectContent>
+                  {players.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} {p.category?.name ? `(${p.category.name})` : ''}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Concepto</Label>
+              <Select value={form.concept} onValueChange={(v) => setForm({ ...form, concept: v, amount: v === 'Uniforme' ? 3000 : form.amount })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Mensualidad">Mensualidad</SelectItem>
+                  <SelectItem value="Arbitraje">Arbitraje</SelectItem>
+                  <SelectItem value="Transporte">Transporte</SelectItem>
+                  <SelectItem value="Uniforme">Uniforme</SelectItem>
+                  <SelectItem value="Torneo">Torneo</SelectItem>
+                  <SelectItem value="Inscripción">Inscripción</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Año</Label>
+              <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{[2024, 2025, 2026, 2027].map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Monto total</Label>
+              <Input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Mes o meses que cubre</Label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+              {MONTHS_ES.map((m, i) => (
+                <label key={m} className={`border rounded-lg px-3 py-2 text-sm cursor-pointer ${form.months.includes(String(i + 1)) ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white'}`}>
+                  <input type="checkbox" className="mr-2" checked={form.months.includes(String(i + 1))} onChange={() => toggleMonth(i + 1)} />
+                  {m}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {form.mode === 'payment' && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Método</Label>
+                <Select value={form.payment_method} onValueChange={(v) => setForm({ ...form, payment_method: v, account: v === 'Transferencia' ? 'Beto BBVA' : 'Ale' })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Efectivo">Efectivo</SelectItem>
+                    <SelectItem value="Transferencia">Transferencia</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Cuenta / responsable</Label>
+                <Select value={form.account} onValueChange={(v) => setForm({ ...form, account: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{accountOptions.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Notas</Label>
+                <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Opcional" />
+              </div>
+            </div>
+          )}
+
+          {form.mode === 'charge' && (
+            <div className="space-y-2">
+              <Label>Notas del cargo</Label>
+              <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Opcional" />
+            </div>
+          )}
+
+          <Button onClick={saveManual} disabled={saving || players.length === 0} className="bg-emerald-600 hover:bg-emerald-700">
+            {saving ? 'Guardando...' : form.mode === 'charge' ? 'Crear cargo pendiente' : 'Guardar pago'}
+          </Button>
+        </CardContent>
+      </Card>
 
       <div className="flex flex-wrap gap-3 items-end">
         <div className="space-y-1">
-          <Label className="text-xs">Mes</Label>
-          <Select value={String(month)} onValueChange={(v) => setMonth(Number(v))}>
+          <Label className="text-xs">Ver mes</Label>
+          <Select value={String(month)} onValueChange={(v) => setMonth(v === 'all' ? 'all' : Number(v))}>
             <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-            <SelectContent>{MONTHS_ES.map((m, i) => <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Año</Label>
-          <Select value={String(year)} onValueChange={(v) => setYear(Number(v))}>
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-            <SelectContent>{[2024, 2025, 2026].map((y) => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}</SelectContent>
+            <SelectContent>
+              <SelectItem value="all">Todos</SelectItem>
+              {MONTHS_ES.map((m, i) => <SelectItem key={i + 1} value={String(i + 1)}>{m}</SelectItem>)}
+            </SelectContent>
           </Select>
         </div>
         <div className="space-y-1">
@@ -593,11 +803,13 @@ function PaymentsView() {
             <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Todos</SelectItem>
-              <SelectItem value="paid">Pagados</SelectItem>
-              <SelectItem value="pending">Pendientes</SelectItem>
+              <SelectItem value="paid">Pagado</SelectItem>
+              <SelectItem value="partial">Parcial</SelectItem>
+              <SelectItem value="pending">Pendiente</SelectItem>
             </SelectContent>
           </Select>
         </div>
+        <Button variant="outline" onClick={load}><RefreshCw className="w-4 h-4 mr-2" />Actualizar</Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -612,10 +824,11 @@ function PaymentsView() {
             <TableRow>
               <TableHead>Jugador</TableHead>
               <TableHead>Categoría</TableHead>
+              <TableHead>Concepto</TableHead>
               <TableHead>Periodo</TableHead>
               <TableHead>Monto</TableHead>
               <TableHead>Estado</TableHead>
-              <TableHead>Pagado el</TableHead>
+              <TableHead>Método / cuenta</TableHead>
               <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>
@@ -623,31 +836,30 @@ function PaymentsView() {
             {payments.map((p) => (
               <TableRow key={p.id}>
                 <TableCell className="font-medium">{p.player?.name || '—'}</TableCell>
-                <TableCell>
-                  {p.player?.category ? <Badge variant="outline" style={{ borderColor: p.player.category_color, color: p.player.category_color }}>{p.player.category}</Badge> : '—'}
-                </TableCell>
+                <TableCell>{p.player?.category ? <Badge variant="outline" style={{ borderColor: p.player.category_color, color: p.player.category_color }}>{p.player.category}</Badge> : '—'}</TableCell>
+                <TableCell>{p.concept || 'Mensualidad'}</TableCell>
                 <TableCell className="text-sm">{MONTHS_ES[p.month - 1]} {p.year}</TableCell>
-                <TableCell className="font-semibold">{fmt(p.amount)}</TableCell>
-                <TableCell>
-                  {p.status === 'paid' ? (
-                    <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100"><CheckCircle2 className="w-3 h-3 mr-1" />Pagado</Badge>
-                  ) : (
-                    <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100"><Clock className="w-3 h-3 mr-1" />Pendiente</Badge>
-                  )}
+                <TableCell className="font-semibold">
+                  {p.status === 'partial' ? `${fmt(p.amount)} de ${fmt(getPaymentExpected(p))}` : fmt(getPaymentExpected(p))}
                 </TableCell>
-                <TableCell className="text-sm text-muted-foreground">{p.paid_date ? new Date(p.paid_date).toLocaleDateString('es-MX') : '—'}</TableCell>
+                <TableCell>
+                  {p.status === 'paid' && <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100"><CheckCircle2 className="w-3 h-3 mr-1" />Pagado</Badge>}
+                  {p.status === 'partial' && <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100"><Clock className="w-3 h-3 mr-1" />Parcial</Badge>}
+                  {p.status === 'pending' && <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100"><Clock className="w-3 h-3 mr-1" />Pendiente</Badge>}
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground">{p.payment_method ? `${p.payment_method} / ${p.account || '—'}` : '—'}</TableCell>
                 <TableCell className="text-right">
-                  <Button size="sm" variant={p.status === 'paid' ? 'outline' : 'default'} className={p.status === 'paid' ? '' : 'bg-emerald-600 hover:bg-emerald-700'} onClick={() => togglePaid(p)}>
-                    {p.status === 'paid' ? 'Desmarcar' : 'Marcar pagado'}
-                  </Button>
+                  {p.status !== 'paid' ? (
+                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => markPaid(p)}>Marcar pagado</Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={() => markPending(p)}>Desmarcar</Button>
+                  )}
                   <Button size="icon" variant="ghost" onClick={() => remove(p.id)}><Trash2 className="w-4 h-4 text-rose-600" /></Button>
                 </TableCell>
               </TableRow>
             ))}
             {payments.length === 0 && !loading && (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-10">
-                No hay pagos. Usa "Generar mensualidad" para crear los pagos del mes.
-              </TableCell></TableRow>
+              <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-10">No hay movimientos para este filtro.</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

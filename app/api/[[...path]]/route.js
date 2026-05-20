@@ -175,18 +175,21 @@ async function handle(request, { params }) {
     );
   }
   if (path === 'payments' && method === 'POST') {
-    const { player_id, month, year, amount, status, payment_method, notes } = body || {};
+    const { player_id, month, year, amount, expected_amount, status, payment_method, account, concept, notes } = body || {};
     if (!player_id || !month || !year) return err('Datos incompletos');
     const doc = {
       id: uuidv4(),
       player_id,
+      concept: concept || 'Mensualidad',
       month: Number(month),
       year: Number(year),
       amount: Number(amount) || 0,
+      expected_amount: expected_amount !== undefined ? Number(expected_amount) || 0 : Number(amount) || 0,
       status: status || 'pending',
       payment_method: payment_method || '',
+      account: account || '',
       notes: notes || '',
-      paid_date: status === 'paid' ? new Date().toISOString() : null,
+      paid_date: status === 'paid' || status === 'partial' ? new Date().toISOString() : null,
       created_at: new Date().toISOString(),
     };
     await db.collection('payments').insertOne(doc);
@@ -199,10 +202,10 @@ async function handle(request, { params }) {
       return json({ ok: true });
     }
     const update = {};
-    for (const k of ['amount', 'status', 'payment_method', 'notes', 'month', 'year']) {
-      if (body[k] !== undefined) update[k] = k === 'amount' || k === 'month' || k === 'year' ? Number(body[k]) : body[k];
+    for (const k of ['amount', 'expected_amount', 'status', 'payment_method', 'account', 'concept', 'notes', 'month', 'year']) {
+      if (body[k] !== undefined) update[k] = ['amount', 'expected_amount', 'month', 'year'].includes(k) ? Number(body[k]) : body[k];
     }
-    if (body.status === 'paid') update.paid_date = new Date().toISOString();
+    if (body.status === 'paid' || body.status === 'partial') update.paid_date = new Date().toISOString();
     if (body.status === 'pending') update.paid_date = null;
     await db.collection('payments').updateOne({ id }, { $set: update });
     const doc = await db.collection('payments').findOne({ id });
@@ -221,7 +224,7 @@ async function handle(request, { params }) {
     for (const p of players) {
       const exists = await db
         .collection('payments')
-        .findOne({ player_id: p.id, month: Number(month), year: Number(year) });
+        .findOne({ player_id: p.id, month: Number(month), year: Number(year), concept: 'Mensualidad' });
       if (exists) {
         skipped++;
         continue;
@@ -233,9 +236,12 @@ async function handle(request, { params }) {
         player_id: p.id,
         month: Number(month),
         year: Number(year),
+        concept: 'Mensualidad',
         amount: fee,
+        expected_amount: fee,
         status: 'pending',
         payment_method: '',
+        account: '',
         notes: '',
         paid_date: null,
         created_at: new Date().toISOString(),
