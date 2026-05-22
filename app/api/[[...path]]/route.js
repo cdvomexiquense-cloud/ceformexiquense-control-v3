@@ -30,9 +30,19 @@ async function handle(request, { params }) {
     const { username, password } = body || {};
     const adminUser = process.env.ADMIN_USERNAME || 'admin';
     const adminPass = process.env.ADMIN_PASSWORD || 'admin123';
+    let authUser = null;
     if (username === adminUser && password === adminPass) {
-      const token = signToken({ sub: username, role: 'admin' });
-      const res = json({ ok: true, user: { username, role: 'admin' } });
+      authUser = { username, role: 'owner' };
+    } else {
+      try {
+        const dbLogin = await getDb();
+        const stored = await dbLogin.collection('users').findOne({ email: username, password });
+        if (stored) authUser = { username: stored.email, role: stored.role || 'admin', name: stored.name };
+      } catch {}
+    }
+    if (authUser) {
+      const token = signToken({ sub: authUser.username, role: authUser.role, name: authUser.name || authUser.username });
+      const res = json({ ok: true, user: authUser });
       res.headers.set(
         'Set-Cookie',
         `auth_token=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 7}`
@@ -251,6 +261,76 @@ async function handle(request, { params }) {
     return json({ created, skipped });
   }
 
+
+  // ---------------- EXPENSES ----------------
+  if (path === 'expenses' && method === 'GET') {
+    const items = await db.collection('expenses').find({}).sort({ date: -1, created_at: -1 }).toArray();
+    return json(items.map((x) => ({ ...x, _id: undefined })));
+  }
+  if (path === 'expenses' && method === 'POST') {
+    const doc = {
+      id: uuidv4(),
+      date: body.date || new Date().toISOString().slice(0, 10),
+      concept: body.concept || 'Otro',
+      amount: Number(body.amount) || 0,
+      account: body.account || '',
+      responsible: body.responsible || '',
+      notes: body.notes || '',
+      created_at: new Date().toISOString(),
+    };
+    await db.collection('expenses').insertOne(doc);
+    return json({ ...doc, _id: undefined });
+  }
+  if (path.startsWith('expenses/') && method === 'DELETE') {
+    await db.collection('expenses').deleteOne({ id: path.split('/')[1] });
+    return json({ ok: true });
+  }
+
+  // ---------------- MATCHES ----------------
+  if (path === 'matches' && method === 'GET') {
+    const items = await db.collection('matches').find({}).sort({ date: -1 }).toArray();
+    return json(items.map((x) => ({ ...x, _id: undefined })));
+  }
+  if (path === 'matches' && method === 'POST') {
+    const doc = {
+      id: uuidv4(),
+      date: body.date || new Date().toISOString().slice(0, 10),
+      rival: body.rival || '',
+      category: body.category || '',
+      home_away: body.home_away || 'Local',
+      referee: Number(body.referee) || 0,
+      transport: Number(body.transport) || 0,
+      notes: body.notes || '',
+      created_at: new Date().toISOString(),
+    };
+    await db.collection('matches').insertOne(doc);
+    return json({ ...doc, _id: undefined });
+  }
+  if (path.startsWith('matches/') && method === 'DELETE') {
+    await db.collection('matches').deleteOne({ id: path.split('/')[1] });
+    return json({ ok: true });
+  }
+
+  // ---------------- USERS ----------------
+  if (path === 'users' && method === 'GET') {
+    const items = await db.collection('users').find({}).sort({ name: 1 }).toArray();
+    const envUser = { id: 'owner-env', name: 'Administrador principal', email: process.env.ADMIN_USERNAME || 'admin', role: 'owner' };
+    return json([envUser, ...items.map((x) => ({ ...x, password: undefined, _id: undefined }))]);
+  }
+  if (path === 'users' && method === 'POST') {
+    const count = await db.collection('users').countDocuments({});
+    if (count >= 4) return err('Límite de 5 usuarios alcanzado. Elimina uno para agregar otro.', 400);
+    const doc = { id: uuidv4(), name: body.name || '', email: body.email || '', password: body.password || '', role: body.role || 'admin', created_at: new Date().toISOString() };
+    await db.collection('users').insertOne(doc);
+    return json({ ...doc, password: undefined, _id: undefined });
+  }
+  if (path.startsWith('users/') && method === 'DELETE') {
+    const id = path.split('/')[1];
+    if (id === 'owner-env') return err('No puedes eliminar el usuario principal de variables de entorno', 400);
+    await db.collection('users').deleteOne({ id });
+    return json({ ok: true });
+  }
+
   // ---------------- STATS / DASHBOARD ----------------
   if (path === 'stats' && method === 'GET') {
     const now = new Date();
@@ -260,6 +340,7 @@ async function handle(request, { params }) {
     const players = await db.collection('players').find({}).toArray();
     const activePlayers = players.filter((p) => p.active !== false).length;
     const payments = await db.collection('payments').find({}).toArray();
+    const expenses = await db.collection('expenses').find({}).toArray();
     const monthPayments = payments.filter((p) => p.month === currentMonth && p.year === currentYear);
     const totalCollected = payments.filter((p) => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0);
     const totalPending = payments.filter((p) => p.status === 'pending').reduce((s, p) => s + (p.amount || 0), 0);
@@ -302,6 +383,7 @@ async function handle(request, { params }) {
       totalPlayers: players.length,
       totalCollected,
       totalPending,
+      totalExpenses: expenses.reduce((s, e) => s + (e.amount || 0), 0),
       monthCollected,
       monthPending,
       monthExpected,
@@ -315,6 +397,7 @@ async function handle(request, { params }) {
   // ---------------- REPORTS ----------------
   if (path === 'reports/summary' && method === 'GET') {
     const payments = await db.collection('payments').find({}).toArray();
+    const expenses = await db.collection('expenses').find({}).toArray();
     const players = await db.collection('players').find({}).toArray();
     const categories = await db.collection('categories').find({}).toArray();
     const catMap = Object.fromEntries(categories.map((c) => [c.id, c]));
@@ -330,10 +413,27 @@ async function handle(request, { params }) {
       else byCategory[catId].pending += p.amount || 0;
     });
 
+    const byAccountMap = {};
+    payments.filter((p) => p.status === 'paid').forEach((p) => {
+      const a = p.account || 'Sin cuenta';
+      if (!byAccountMap[a]) byAccountMap[a] = { account: a, income: 0, expense: 0 };
+      byAccountMap[a].income += p.amount || 0;
+    });
+    expenses.forEach((e) => {
+      const a = e.account || 'Sin cuenta';
+      if (!byAccountMap[a]) byAccountMap[a] = { account: a, income: 0, expense: 0 };
+      byAccountMap[a].expense += e.amount || 0;
+    });
+    const totalPaid = payments.filter((p) => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0);
+    const totalPending = payments.filter((p) => p.status !== 'paid').reduce((s, p) => s + Math.max(0, (p.expected_amount ?? p.amount ?? 0) - (p.status === 'partial' ? (p.amount || 0) : 0)), 0);
+    const totalExpenses = expenses.reduce((s, e) => s + (e.amount || 0), 0);
     return json({
       byCategory: Object.values(byCategory),
-      totalPaid: payments.filter((p) => p.status === 'paid').reduce((s, p) => s + (p.amount || 0), 0),
-      totalPending: payments.filter((p) => p.status === 'pending').reduce((s, p) => s + (p.amount || 0), 0),
+      byAccount: Object.values(byAccountMap),
+      totalPaid,
+      totalPending,
+      totalExpenses,
+      net: totalPaid - totalExpenses,
       totalPayments: payments.length,
       totalPlayers: players.length,
     });

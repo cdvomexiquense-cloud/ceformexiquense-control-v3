@@ -59,8 +59,8 @@ function LoginScreen({ onLogin }) {
           <div className="w-16 h-16 rounded-2xl bg-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-200 mb-4">
             <Trophy className="w-9 h-9 text-white" />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">AcademiaPro</h1>
-          <p className="text-muted-foreground mt-1">Sistema de gestión para academias de fútbol</p>
+          <h1 className="text-3xl font-bold tracking-tight">CEFORMexiquense_control</h1>
+          <p className="text-muted-foreground mt-1">Sistema de control CEFOR Mexiquense</p>
         </div>
         <Card className="shadow-xl border-0">
           <CardHeader>
@@ -96,6 +96,11 @@ function Sidebar({ view, setView, onLogout }) {
     { id: 'dashboard', label: 'Panel', icon: LayoutDashboard },
     { id: 'players', label: 'Jugadores', icon: Users },
     { id: 'payments', label: 'Pagos', icon: CreditCard },
+    { id: 'expenses', label: 'Egresos', icon: Wallet },
+    { id: 'accounts', label: 'Cuentas', icon: DollarSign },
+    { id: 'history', label: 'Historial', icon: Search },
+    { id: 'matches', label: 'Partidos', icon: Trophy },
+    { id: 'users', label: 'Usuarios', icon: Users },
     { id: 'categories', label: 'Categorías', icon: FolderKanban },
     { id: 'reports', label: 'Reportes', icon: BarChart3 },
   ];
@@ -107,8 +112,8 @@ function Sidebar({ view, setView, onLogout }) {
             <Trophy className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h1 className="font-bold leading-tight">AcademiaPro</h1>
-            <p className="text-xs text-muted-foreground">Gestión integral</p>
+            <h1 className="font-bold leading-tight">CEFORMexiquense_control</h1>
+            <p className="text-xs text-muted-foreground">Control integral</p>
           </div>
         </div>
       </div>
@@ -930,6 +935,92 @@ function ReportsView() {
   );
 }
 
+
+function downloadCSV(filename, rows) {
+  const headers = Object.keys(rows[0] || { mensaje: '' });
+  const csv = [headers.join(','), ...rows.map((row) => headers.map((h) => `"${String(row[h] ?? '').replaceAll('"', '""')}"`).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
+}
+
+function ExpensesView() {
+  const [items, setItems] = useState([]);
+  const [form, setForm] = useState({ date: new Date().toISOString().slice(0,10), concept: 'Arbitraje', amount: 0, account: 'Ale', responsible: 'Ale', notes: '' });
+  const [loading, setLoading] = useState(false);
+  const load = async () => { try { setItems(await api('expenses')); } catch(e) { toast.error(e.message); } };
+  useEffect(() => { load(); }, []);
+  const save = async () => {
+    if (!form.amount || Number(form.amount) <= 0) return toast.error('Captura un monto válido');
+    setLoading(true);
+    try { await api('expenses', { method:'POST', body: JSON.stringify(form) }); toast.success('Egreso guardado'); setForm({ ...form, amount: 0, notes: '' }); load(); }
+    catch(e) { toast.error(e.message); } finally { setLoading(false); }
+  };
+  const remove = async (id) => { if (!confirm('¿Eliminar egreso?')) return; await api(`expenses/${id}`, { method:'DELETE' }); toast.success('Egreso eliminado'); load(); };
+  const total = items.reduce((s, x) => s + Number(x.amount || 0), 0);
+  return <div className="p-6 space-y-6">
+    <div><h2 className="text-2xl font-bold">Egresos</h2><p className="text-muted-foreground text-sm">Gastos separados de pagos, pero incluidos en finanzas.</p></div>
+    <Card><CardHeader><CardTitle>Nuevo egreso</CardTitle></CardHeader><CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="space-y-2"><Label>Fecha</Label><Input type="date" value={form.date} onChange={(e)=>setForm({...form,date:e.target.value})}/></div>
+      <div className="space-y-2"><Label>Concepto</Label><Select value={form.concept} onValueChange={(v)=>setForm({...form,concept:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{['Arbitraje','Transporte','Torneo','Sueldos','Internet','Uniformes','Material','Otro'].map(x=><SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div>
+      <div className="space-y-2"><Label>Monto</Label><Input type="number" value={form.amount} onChange={(e)=>setForm({...form,amount:e.target.value})}/></div>
+      <div className="space-y-2"><Label>Cuenta salida</Label><Select value={form.account} onValueChange={(v)=>setForm({...form,account:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{['Ale','Tere','Beto','Beto BBVA','Ale MercadoPago','Tere Banorte'].map(x=><SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div>
+      <div className="space-y-2"><Label>Responsable</Label><Select value={form.responsible} onValueChange={(v)=>setForm({...form,responsible:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent>{['Ale','Tere','Beto'].map(x=><SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select></div>
+      <div className="space-y-2"><Label>Notas</Label><Input value={form.notes} onChange={(e)=>setForm({...form,notes:e.target.value})} placeholder="Opcional"/></div>
+      <div className="md:col-span-3"><Button onClick={save} disabled={loading} className="bg-emerald-600 hover:bg-emerald-700">Guardar egreso</Button></div>
+    </CardContent></Card>
+    <div className="flex justify-between items-center"><StatCard icon={Wallet} label="Total egresos" value={fmt(total)} color="rose"/><Button variant="outline" onClick={()=>downloadCSV('egresos.csv',items)}>Exportar CSV</Button></div>
+    <Card><Table><TableHeader><TableRow><TableHead>Fecha</TableHead><TableHead>Concepto</TableHead><TableHead>Cuenta</TableHead><TableHead>Responsable</TableHead><TableHead>Monto</TableHead><TableHead>Notas</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{items.map(x=><TableRow key={x.id}><TableCell>{x.date}</TableCell><TableCell>{x.concept}</TableCell><TableCell>{x.account}</TableCell><TableCell>{x.responsible}</TableCell><TableCell className="font-bold text-rose-600">{fmt(x.amount)}</TableCell><TableCell>{x.notes || '—'}</TableCell><TableCell className="text-right"><Button size="icon" variant="ghost" onClick={()=>remove(x.id)}><Trash2 className="w-4 h-4 text-rose-600"/></Button></TableCell></TableRow>)}</TableBody></Table></Card>
+  </div>;
+}
+
+function AccountsView() {
+  const [data, setData] = useState(null);
+  useEffect(() => { (async()=>{ try { setData(await api('reports/summary')); } catch(e){ toast.error(e.message); } })(); }, []);
+  if (!data) return <div className="p-8 text-center text-muted-foreground">Cargando...</div>;
+  const rows = data.byAccount || [];
+  return <div className="p-6 space-y-6"><div><h2 className="text-2xl font-bold">Cuentas financieras</h2><p className="text-muted-foreground text-sm">Ingresos, egresos y saldo por responsable/cuenta.</p></div>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4"><StatCard icon={TrendingUp} label="Ingresos" value={fmt(data.totalPaid)} /><StatCard icon={Wallet} label="Egresos" value={fmt(data.totalExpenses)} color="rose"/><StatCard icon={DollarSign} label="Saldo" value={fmt(data.net)} color="blue"/></div>
+    <Card><Table><TableHeader><TableRow><TableHead>Cuenta</TableHead><TableHead>Ingresos</TableHead><TableHead>Egresos</TableHead><TableHead>Saldo</TableHead></TableRow></TableHeader><TableBody>{rows.map((r)=><TableRow key={r.account}><TableCell>{r.account}</TableCell><TableCell className="text-emerald-600 font-semibold">{fmt(r.income)}</TableCell><TableCell className="text-rose-600 font-semibold">{fmt(r.expense)}</TableCell><TableCell className="font-bold">{fmt(r.income-r.expense)}</TableCell></TableRow>)}</TableBody></Table></Card>
+  </div>;
+}
+
+function HistoryView() {
+  const [players,setPlayers]=useState([]); const [payments,setPayments]=useState([]); const [playerId,setPlayerId]=useState('');
+  useEffect(()=>{(async()=>{const p=await api('players'); setPlayers(p); setPlayerId(p[0]?.id||'');})().catch(e=>toast.error(e.message));},[]);
+  useEffect(()=>{ if(playerId) api(`payments?player_id=${playerId}`).then(setPayments).catch(e=>toast.error(e.message)); },[playerId]);
+  const player = players.find(p=>p.id===playerId); const paid=payments.filter(p=>p.status==='paid').reduce((s,p)=>s+(p.amount||0),0); const pending=payments.filter(p=>p.status!=='paid').reduce((s,p)=>s+Math.max(0,(p.expected_amount??p.amount??0)-(p.status==='partial'?(p.amount||0):0)),0);
+  return <div className="p-6 space-y-6"><div><h2 className="text-2xl font-bold">Historial por jugador</h2><p className="text-muted-foreground text-sm">Estado de cuenta individual.</p></div>
+    <div className="max-w-xl"><Label>Jugador</Label><Select value={playerId} onValueChange={setPlayerId}><SelectTrigger><SelectValue placeholder="Selecciona"/></SelectTrigger><SelectContent>{players.map(p=><SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+    {player && <div className="grid grid-cols-1 md:grid-cols-3 gap-4"><StatCard icon={Users} label="Jugador" value={player.name}/><StatCard icon={TrendingUp} label="Pagado" value={fmt(paid)}/><StatCard icon={AlertTriangle} label="Adeudo" value={fmt(pending)} color="amber"/></div>}
+    <div className="flex gap-2"><Button variant="outline" onClick={()=>downloadCSV(`historial-${player?.name||'jugador'}.csv`,payments)}>Exportar CSV</Button><Button variant="outline" onClick={()=>window.print()}>Imprimir / PDF</Button></div>
+    <Card><Table><TableHeader><TableRow><TableHead>Concepto</TableHead><TableHead>Periodo</TableHead><TableHead>Monto</TableHead><TableHead>Estado</TableHead><TableHead>Método/Cuenta</TableHead><TableHead>Notas</TableHead></TableRow></TableHeader><TableBody>{payments.map(p=><TableRow key={p.id}><TableCell>{p.concept}</TableCell><TableCell>{MONTHS_ES[p.month-1]} {p.year}</TableCell><TableCell>{p.status==='partial'?`${fmt(p.amount)} de ${fmt(p.expected_amount)}`:fmt(p.expected_amount??p.amount)}</TableCell><TableCell>{p.status}</TableCell><TableCell>{p.payment_method ? `${p.payment_method} / ${p.account}` : '—'}</TableCell><TableCell>{p.notes||'—'}</TableCell></TableRow>)}</TableBody></Table></Card>
+  </div>;
+}
+
+function MatchesView() {
+  const [items,setItems]=useState([]); const [form,setForm]=useState({date:new Date().toISOString().slice(0,10), rival:'', category:'', home_away:'Local', referee:0, transport:0, notes:''});
+  const load=()=>api('matches').then(setItems).catch(e=>toast.error(e.message)); useEffect(()=>{load();},[]);
+  const save=async()=>{ if(!form.rival) return toast.error('Captura rival'); await api('matches',{method:'POST',body:JSON.stringify(form)}); toast.success('Partido guardado'); setForm({...form,rival:'',notes:''}); load(); };
+  const remove=async(id)=>{await api(`matches/${id}`,{method:'DELETE'}); load();};
+  return <div className="p-6 space-y-6"><div><h2 className="text-2xl font-bold">Partidos y convocatorias</h2><p className="text-muted-foreground text-sm">Módulo básico para registrar partidos sin complicar pagos.</p></div>
+    <Card><CardHeader><CardTitle>Nuevo partido</CardTitle></CardHeader><CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4"><Input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/><Input placeholder="Rival" value={form.rival} onChange={e=>setForm({...form,rival:e.target.value})}/><Input placeholder="Categoría" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/><Select value={form.home_away} onValueChange={v=>setForm({...form,home_away:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Local">Local</SelectItem><SelectItem value="Visita">Visita</SelectItem></SelectContent></Select><Input type="number" placeholder="Arbitraje" value={form.referee} onChange={e=>setForm({...form,referee:e.target.value})}/><Input type="number" placeholder="Transporte" value={form.transport} onChange={e=>setForm({...form,transport:e.target.value})}/><Input className="md:col-span-3" placeholder="Notas" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/><Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Guardar partido</Button></CardContent></Card>
+    <Card><Table><TableHeader><TableRow><TableHead>Fecha</TableHead><TableHead>Rival</TableHead><TableHead>Categoría</TableHead><TableHead>Local/Visita</TableHead><TableHead>Arbitraje</TableHead><TableHead>Transporte</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{items.map(x=><TableRow key={x.id}><TableCell>{x.date}</TableCell><TableCell>{x.rival}</TableCell><TableCell>{x.category}</TableCell><TableCell>{x.home_away}</TableCell><TableCell>{fmt(x.referee)}</TableCell><TableCell>{fmt(x.transport)}</TableCell><TableCell><Button size="icon" variant="ghost" onClick={()=>remove(x.id)}><Trash2 className="w-4 h-4 text-rose-600"/></Button></TableCell></TableRow>)}</TableBody></Table></Card>
+  </div>;
+}
+
+function UsersView() {
+  const [items,setItems]=useState([]); const [form,setForm]=useState({name:'',email:'',password:'',role:'admin'});
+  const load=()=>api('users').then(setItems).catch(e=>toast.error(e.message)); useEffect(()=>{load();},[]);
+  const save=async()=>{ if(!form.name||!form.email) return toast.error('Faltan datos'); await api('users',{method:'POST',body:JSON.stringify(form)}); toast.success('Usuario guardado'); setForm({name:'',email:'',password:'',role:'admin'}); load(); };
+  const remove=async(id)=>{await api(`users/${id}`,{method:'DELETE'}); load();};
+  return <div className="p-6 space-y-6"><div><h2 className="text-2xl font-bold">Usuarios</h2><p className="text-muted-foreground text-sm">Control interno de usuarios. Máximo recomendado: 5.</p></div>
+    <Card><CardHeader><CardTitle>Nuevo usuario</CardTitle></CardHeader><CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4"><Input placeholder="Nombre" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/><Input placeholder="Correo" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/><Input placeholder="Contraseña" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/><Select value={form.role} onValueChange={v=>setForm({...form,role:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="admin">Admin</SelectItem><SelectItem value="coach">Coach</SelectItem><SelectItem value="viewer">Consulta</SelectItem></SelectContent></Select><Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Guardar usuario</Button></CardContent></Card>
+    <Card><Table><TableHeader><TableRow><TableHead>Nombre</TableHead><TableHead>Correo</TableHead><TableHead>Rol</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{items.map(u=><TableRow key={u.id}><TableCell>{u.name}</TableCell><TableCell>{u.email}</TableCell><TableCell>{u.role}</TableCell><TableCell className="text-right"><Button size="icon" variant="ghost" onClick={()=>remove(u.id)}><Trash2 className="w-4 h-4 text-rose-600"/></Button></TableCell></TableRow>)}</TableBody></Table></Card>
+  </div>;
+}
+
 function App() {
   const [authed, setAuthed] = useState(null);
   const [view, setView] = useState('dashboard');
@@ -953,6 +1044,11 @@ function App() {
         {view === 'dashboard' && <Dashboard />}
         {view === 'players' && <PlayersView />}
         {view === 'payments' && <PaymentsView />}
+        {view === 'expenses' && <ExpensesView />}
+        {view === 'accounts' && <AccountsView />}
+        {view === 'history' && <HistoryView />}
+        {view === 'matches' && <MatchesView />}
+        {view === 'users' && <UsersView />}
         {view === 'categories' && <CategoriesView />}
         {view === 'reports' && <ReportsView />}
       </main>

@@ -1,0 +1,25 @@
+INSTALACION VERSION COMPLETA CEFOR
+
+1. Abre GitHub Desktop.
+2. Repository > Show in Explorer.
+3. En la carpeta que se abra NO borres .git.
+4. Copia TODO el contenido de la carpeta ceformexiquense-control-v3 de este ZIP.
+5. Pegalo encima de la carpeta enlazada por GitHub Desktop.
+6. Reemplaza archivos.
+7. En GitHub Desktop escribe Summary:
+   sistema completo cefor egresos cuentas historial usuarios partidos
+8. Commit to main.
+9. Push origin.
+10. Espera el deploy de Vercel.
+11. Abre el deployment mas nuevo con Visit.
+
+NUEVO EN ESTA VERSION:
+- Egresos separados.
+- Cuentas financieras con ingresos, egresos y saldo.
+- Historial por jugador.
+- Exportacion CSV e impresion/PDF desde navegador.
+- Usuarios internos con limite de 5.
+- Login con usuarios creados en la app, ademas del admin de Vercel.
+- Partidos/convocatorias basicos.
+- Reportes con egresos.
+- Branding CEFORMexiquense_control.
