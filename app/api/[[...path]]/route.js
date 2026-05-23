@@ -300,6 +300,7 @@ async function handle(request, { params }) {
       home_away: body.home_away || 'Local',
       referee: Number(body.referee) || 0,
       transport: Number(body.transport) || 0,
+      selected_players: Array.isArray(body.selected_players) ? body.selected_players : [],
       notes: body.notes || '',
       created_at: new Date().toISOString(),
     };

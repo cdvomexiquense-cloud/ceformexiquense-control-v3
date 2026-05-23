@@ -458,6 +458,7 @@ function PlayersView() {
                 </TableCell>
                 <TableCell className="text-right">
                   <Button size="icon" variant="ghost" onClick={() => openEdit(p)}><Pencil className="w-4 h-4" /></Button>
+                  <Button size="sm" variant="outline" onClick={() => printReceipt(p)}>Recibo</Button>
                   <Button size="icon" variant="ghost" onClick={() => remove(p.id)}><Trash2 className="w-4 h-4 text-rose-600" /></Button>
                 </TableCell>
               </TableRow>
@@ -517,6 +518,35 @@ function PlayersView() {
       </Dialog>
     </div>
   );
+}
+
+
+function printReceipt(payment) {
+  const playerName = payment.player?.name || 'Jugador';
+  const category = payment.player?.category || 'Sin categoría';
+  const period = `${MONTHS_ES[(payment.month || 1) - 1]} ${payment.year || ''}`;
+  const amount = payment.status === 'partial' ? `${fmt(payment.amount)} de ${fmt(payment.expected_amount)}` : fmt(payment.expected_amount ?? payment.amount);
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Recibo CEFOR</title><style>
+    body{font-family:Arial,sans-serif;padding:28px;color:#111} .ticket{max-width:520px;border:2px solid #111;border-radius:16px;padding:24px;margin:auto}
+    h1{margin:0 0 6px;font-size:22px}.muted{color:#555;font-size:12px}.row{display:flex;justify-content:space-between;border-bottom:1px solid #ddd;padding:9px 0;gap:16px}.total{font-size:22px;font-weight:700}.brand{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}.stamp{border:2px solid #10b981;color:#047857;border-radius:999px;padding:6px 12px;font-weight:700}.notes{margin-top:18px;font-size:12px;color:#555}@media print{button{display:none}.ticket{border-color:#000}}
+  </style></head><body><div class="ticket"><div class="brand"><div><h1>CEFORMexiquense_control</h1><div class="muted">Recibo de pago</div></div><div class="stamp">${payment.status === 'paid' ? 'PAGADO' : payment.status?.toUpperCase() || 'MOVIMIENTO'}</div></div>
+    <div class="row"><strong>Jugador</strong><span>${playerName}</span></div>
+    <div class="row"><strong>Categoría</strong><span>${category}</span></div>
+    <div class="row"><strong>Concepto</strong><span>${payment.concept || 'Mensualidad'}</span></div>
+    <div class="row"><strong>Periodo</strong><span>${period}</span></div>
+    <div class="row"><strong>Método / cuenta</strong><span>${payment.payment_method || '—'} ${payment.account ? '/ ' + payment.account : ''}</span></div>
+    <div class="row total"><strong>Monto</strong><span>${amount}</span></div>
+    <div class="notes">Notas: ${payment.notes || '—'}<br/>Fecha: ${new Date().toLocaleString('es-MX')}</div><br/><button onclick="window.print()">Imprimir / Guardar PDF</button>
+  </div></body></html>`;
+  const w = window.open('', '_blank', 'width=640,height=800');
+  if (!w) return alert('Permite ventanas emergentes para imprimir el recibo.');
+  w.document.write(html); w.document.close(); w.focus();
+}
+
+function standardAccountsRows(rows = []) {
+  const names = ['Ale', 'Tere', 'Beto', 'Beto BBVA', 'Ale MercadoPago', 'Tere Banorte', 'Sin cuenta'];
+  const map = Object.fromEntries(rows.map((r) => [r.account, r]));
+  return names.map((name) => ({ account: name, income: map[name]?.income || 0, expense: map[name]?.expense || 0 }));
 }
 
 function PaymentsView() {
@@ -815,6 +845,8 @@ function PaymentsView() {
           </Select>
         </div>
         <Button variant="outline" onClick={load}><RefreshCw className="w-4 h-4 mr-2" />Actualizar</Button>
+        <Button variant="outline" onClick={() => downloadCSV('pagos-cefor.csv', payments)}>Exportar CSV</Button>
+        <Button variant="outline" onClick={() => window.print()}>Imprimir / PDF</Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -883,9 +915,15 @@ function ReportsView() {
 
   return (
     <div className="p-6 space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Reportes</h2>
-        <p className="text-muted-foreground text-sm">Análisis financiero general</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold">Reportes</h2>
+          <p className="text-muted-foreground text-sm">Análisis financiero general con ingresos, egresos y saldos.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => downloadCSV('reporte-categorias.csv', data.byCategory)}>Exportar CSV</Button>
+          <Button variant="outline" onClick={() => window.print()}>Imprimir / PDF</Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -977,13 +1015,46 @@ function ExpensesView() {
 
 function AccountsView() {
   const [data, setData] = useState(null);
-  useEffect(() => { (async()=>{ try { setData(await api('reports/summary')); } catch(e){ toast.error(e.message); } })(); }, []);
+  const load = async () => { try { setData(await api('reports/summary')); } catch(e){ toast.error(e.message); } };
+  useEffect(() => { load(); }, []);
   if (!data) return <div className="p-8 text-center text-muted-foreground">Cargando...</div>;
-  const rows = data.byAccount || [];
-  return <div className="p-6 space-y-6"><div><h2 className="text-2xl font-bold">Cuentas financieras</h2><p className="text-muted-foreground text-sm">Ingresos, egresos y saldo por responsable/cuenta.</p></div>
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4"><StatCard icon={TrendingUp} label="Ingresos" value={fmt(data.totalPaid)} /><StatCard icon={Wallet} label="Egresos" value={fmt(data.totalExpenses)} color="rose"/><StatCard icon={DollarSign} label="Saldo" value={fmt(data.net)} color="blue"/></div>
-    <Card><Table><TableHeader><TableRow><TableHead>Cuenta</TableHead><TableHead>Ingresos</TableHead><TableHead>Egresos</TableHead><TableHead>Saldo</TableHead></TableRow></TableHeader><TableBody>{rows.map((r)=><TableRow key={r.account}><TableCell>{r.account}</TableCell><TableCell className="text-emerald-600 font-semibold">{fmt(r.income)}</TableCell><TableCell className="text-rose-600 font-semibold">{fmt(r.expense)}</TableCell><TableCell className="font-bold">{fmt(r.income-r.expense)}</TableCell></TableRow>)}</TableBody></Table></Card>
-  </div>;
+  const rows = standardAccountsRows(data.byAccount || []);
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-2xl font-bold">Cuentas financieras</h2>
+          <p className="text-muted-foreground text-sm">Corte por efectivo y transferencias: Ale, Tere, Beto, BBVA, MercadoPago y Banorte.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={load}><RefreshCw className="w-4 h-4 mr-2" />Actualizar</Button>
+          <Button variant="outline" onClick={() => downloadCSV('corte-cuentas-cefor.csv', rows)}>Exportar CSV</Button>
+          <Button variant="outline" onClick={() => window.print()}>Imprimir / PDF</Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <StatCard icon={TrendingUp} label="Ingresos cobrados" value={fmt(data.totalPaid)} />
+        <StatCard icon={Wallet} label="Egresos registrados" value={fmt(data.totalExpenses)} color="rose" />
+        <StatCard icon={DollarSign} label="Saldo general" value={fmt(data.net)} color="blue" />
+      </div>
+      <Card>
+        <Table>
+          <TableHeader><TableRow><TableHead>Cuenta / responsable</TableHead><TableHead>Ingresos</TableHead><TableHead>Egresos</TableHead><TableHead>Saldo actual</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.account}>
+                <TableCell className="font-medium">{r.account}</TableCell>
+                <TableCell className="text-emerald-600 font-semibold">{fmt(r.income)}</TableCell>
+                <TableCell className="text-rose-600 font-semibold">{fmt(r.expense)}</TableCell>
+                <TableCell className="font-bold">{fmt(r.income - r.expense)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
+      <Card><CardContent className="p-5 text-sm text-muted-foreground">Tip: los ingresos salen de pagos marcados como pagados. Los egresos se descuentan según la cuenta registrada en Egresos.</CardContent></Card>
+    </div>
+  );
 }
 
 function HistoryView() {
@@ -1000,24 +1071,81 @@ function HistoryView() {
 }
 
 function MatchesView() {
-  const [items,setItems]=useState([]); const [form,setForm]=useState({date:new Date().toISOString().slice(0,10), rival:'', category:'', home_away:'Local', referee:0, transport:0, notes:''});
-  const load=()=>api('matches').then(setItems).catch(e=>toast.error(e.message)); useEffect(()=>{load();},[]);
-  const save=async()=>{ if(!form.rival) return toast.error('Captura rival'); await api('matches',{method:'POST',body:JSON.stringify(form)}); toast.success('Partido guardado'); setForm({...form,rival:'',notes:''}); load(); };
-  const remove=async(id)=>{await api(`matches/${id}`,{method:'DELETE'}); load();};
-  return <div className="p-6 space-y-6"><div><h2 className="text-2xl font-bold">Partidos y convocatorias</h2><p className="text-muted-foreground text-sm">Módulo básico para registrar partidos sin complicar pagos.</p></div>
-    <Card><CardHeader><CardTitle>Nuevo partido</CardTitle></CardHeader><CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4"><Input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/><Input placeholder="Rival" value={form.rival} onChange={e=>setForm({...form,rival:e.target.value})}/><Input placeholder="Categoría" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/><Select value={form.home_away} onValueChange={v=>setForm({...form,home_away:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Local">Local</SelectItem><SelectItem value="Visita">Visita</SelectItem></SelectContent></Select><Input type="number" placeholder="Arbitraje" value={form.referee} onChange={e=>setForm({...form,referee:e.target.value})}/><Input type="number" placeholder="Transporte" value={form.transport} onChange={e=>setForm({...form,transport:e.target.value})}/><Input className="md:col-span-3" placeholder="Notas" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/><Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Guardar partido</Button></CardContent></Card>
-    <Card><Table><TableHeader><TableRow><TableHead>Fecha</TableHead><TableHead>Rival</TableHead><TableHead>Categoría</TableHead><TableHead>Local/Visita</TableHead><TableHead>Arbitraje</TableHead><TableHead>Transporte</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{items.map(x=><TableRow key={x.id}><TableCell>{x.date}</TableCell><TableCell>{x.rival}</TableCell><TableCell>{x.category}</TableCell><TableCell>{x.home_away}</TableCell><TableCell>{fmt(x.referee)}</TableCell><TableCell>{fmt(x.transport)}</TableCell><TableCell><Button size="icon" variant="ghost" onClick={()=>remove(x.id)}><Trash2 className="w-4 h-4 text-rose-600"/></Button></TableCell></TableRow>)}</TableBody></Table></Card>
-  </div>;
+  const [items, setItems] = useState([]);
+  const [players, setPlayers] = useState([]);
+  const [selected, setSelected] = useState([]);
+  const [form, setForm] = useState({
+    date: new Date().toISOString().slice(0,10), rival: '', category: '', home_away: 'Local', referee: 0, transport: 0, notes: '', create_charges: true,
+  });
+  const load = async () => {
+    try { const [m, p] = await Promise.all([api('matches'), api('players')]); setItems(m); setPlayers(p); }
+    catch(e){ toast.error(e.message); }
+  };
+  useEffect(() => { load(); }, []);
+  const togglePlayer = (id) => setSelected((arr) => arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]);
+  const save = async () => {
+    if (!form.rival) return toast.error('Captura rival');
+    const date = new Date(`${form.date}T12:00:00`);
+    const month = date.getMonth() + 1;
+    const year = date.getFullYear();
+    await api('matches', { method: 'POST', body: JSON.stringify({ ...form, selected_players: selected }) });
+    if (form.create_charges && selected.length) {
+      for (const player_id of selected) {
+        if (Number(form.referee) > 0) {
+          await api('payments', { method: 'POST', body: JSON.stringify({ player_id, concept: 'Arbitraje', month, year, amount: Number(form.referee), expected_amount: Number(form.referee), status: 'pending', notes: `Partido vs ${form.rival}` }) });
+        }
+        if (form.home_away === 'Visita' && Number(form.transport) > 0) {
+          await api('payments', { method: 'POST', body: JSON.stringify({ player_id, concept: 'Transporte', month, year, amount: Number(form.transport), expected_amount: Number(form.transport), status: 'pending', notes: `Transporte vs ${form.rival}` }) });
+        }
+      }
+    }
+    toast.success('Partido guardado' + (form.create_charges ? ' y cargos generados' : ''));
+    setForm({ ...form, rival: '', notes: '' }); setSelected([]); load();
+  };
+  const remove = async(id) => { await api(`matches/${id}`, { method: 'DELETE' }); load(); };
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div><h2 className="text-2xl font-bold">Partidos y convocatorias</h2><p className="text-muted-foreground text-sm">Registra partidos, convocados y genera adeudos de arbitraje/transporte.</p></div>
+        <Button variant="outline" onClick={() => window.print()}>Imprimir / PDF</Button>
+      </div>
+      <Card>
+        <CardHeader><CardTitle>Nuevo partido</CardTitle><CardDescription>Si marcas convocados, puedes generar cargos pendientes automáticamente.</CardDescription></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Input type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/>
+            <Input placeholder="Rival" value={form.rival} onChange={e=>setForm({...form,rival:e.target.value})}/>
+            <Input placeholder="Categoría" value={form.category} onChange={e=>setForm({...form,category:e.target.value})}/>
+            <Select value={form.home_away} onValueChange={v=>setForm({...form,home_away:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="Local">Local</SelectItem><SelectItem value="Visita">Visita</SelectItem></SelectContent></Select>
+            <Input type="number" placeholder="Arbitraje por jugador" value={form.referee} onChange={e=>setForm({...form,referee:e.target.value})}/>
+            <Input type="number" placeholder="Transporte por jugador" value={form.transport} onChange={e=>setForm({...form,transport:e.target.value})} disabled={form.home_away === 'Local'}/>
+            <Input className="md:col-span-3" placeholder="Notas" value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/>
+          </div>
+          <div className="space-y-2">
+            <Label>Convocados</Label>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 max-h-60 overflow-auto border rounded-lg p-3 bg-gray-50">
+              {players.map((p) => <label key={p.id} className="flex items-center gap-2 bg-white rounded-md px-3 py-2 border"><input type="checkbox" checked={selected.includes(p.id)} onChange={() => togglePlayer(p.id)} /> <span>{p.name}</span></label>)}
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.create_charges} onChange={(e)=>setForm({...form,create_charges:e.target.checked})}/> Generar cargos pendientes para convocados</label>
+          <Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Guardar partido / convocatoria</Button>
+        </CardContent>
+      </Card>
+      <Card>
+        <Table><TableHeader><TableRow><TableHead>Fecha</TableHead><TableHead>Rival</TableHead><TableHead>Categoría</TableHead><TableHead>Local/Visita</TableHead><TableHead>Arbitraje</TableHead><TableHead>Transporte</TableHead><TableHead>Convocados</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{items.map(x=><TableRow key={x.id}><TableCell>{x.date}</TableCell><TableCell>{x.rival}</TableCell><TableCell>{x.category}</TableCell><TableCell>{x.home_away}</TableCell><TableCell>{fmt(x.referee)}</TableCell><TableCell>{fmt(x.transport)}</TableCell><TableCell>{x.selected_players?.length || 0}</TableCell><TableCell><Button size="icon" variant="ghost" onClick={()=>remove(x.id)}><Trash2 className="w-4 h-4 text-rose-600"/></Button></TableCell></TableRow>)}</TableBody></Table>
+      </Card>
+    </div>
+  );
 }
 
 function UsersView() {
   const [items,setItems]=useState([]); const [form,setForm]=useState({name:'',email:'',password:'',role:'admin'});
   const load=()=>api('users').then(setItems).catch(e=>toast.error(e.message)); useEffect(()=>{load();},[]);
-  const save=async()=>{ if(!form.name||!form.email) return toast.error('Faltan datos'); await api('users',{method:'POST',body:JSON.stringify(form)}); toast.success('Usuario guardado'); setForm({name:'',email:'',password:'',role:'admin'}); load(); };
-  const remove=async(id)=>{await api(`users/${id}`,{method:'DELETE'}); load();};
-  return <div className="p-6 space-y-6"><div><h2 className="text-2xl font-bold">Usuarios</h2><p className="text-muted-foreground text-sm">Control interno de usuarios. Máximo recomendado: 5.</p></div>
-    <Card><CardHeader><CardTitle>Nuevo usuario</CardTitle></CardHeader><CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4"><Input placeholder="Nombre" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/><Input placeholder="Correo" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/><Input placeholder="Contraseña" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/><Select value={form.role} onValueChange={v=>setForm({...form,role:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="admin">Admin</SelectItem><SelectItem value="coach">Coach</SelectItem><SelectItem value="viewer">Consulta</SelectItem></SelectContent></Select><Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Guardar usuario</Button></CardContent></Card>
-    <Card><Table><TableHeader><TableRow><TableHead>Nombre</TableHead><TableHead>Correo</TableHead><TableHead>Rol</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{items.map(u=><TableRow key={u.id}><TableCell>{u.name}</TableCell><TableCell>{u.email}</TableCell><TableCell>{u.role}</TableCell><TableCell className="text-right"><Button size="icon" variant="ghost" onClick={()=>remove(u.id)}><Trash2 className="w-4 h-4 text-rose-600"/></Button></TableCell></TableRow>)}</TableBody></Table></Card>
+  const save=async()=>{ if(!form.name||!form.email||!form.password) return toast.error('Faltan datos'); await api('users',{method:'POST',body:JSON.stringify(form)}); toast.success('Usuario guardado. Ya puede iniciar sesión con su correo y contraseña.'); setForm({name:'',email:'',password:'',role:'admin'}); load(); };
+  const remove=async(id)=>{ if(!confirm('¿Eliminar usuario?')) return; await api(`users/${id}`,{method:'DELETE'}); load(); };
+  return <div className="p-6 space-y-6"><div><h2 className="text-2xl font-bold">Usuarios y permisos</h2><p className="text-muted-foreground text-sm">Login multiusuario real. Máximo 5 usuarios incluyendo propietario.</p></div>
+    <Card><CardHeader><CardTitle>Nuevo usuario</CardTitle><CardDescription>Admin: captura y consulta todo. Coach: jugadores, historial y partidos. Consulta: solo lectura operativa.</CardDescription></CardHeader><CardContent className="grid grid-cols-1 md:grid-cols-4 gap-4"><Input placeholder="Nombre" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/><Input placeholder="Correo" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/><Input placeholder="Contraseña" value={form.password} onChange={e=>setForm({...form,password:e.target.value})}/><Select value={form.role} onValueChange={v=>setForm({...form,role:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="admin">Admin</SelectItem><SelectItem value="coach">Coach</SelectItem><SelectItem value="viewer">Consulta</SelectItem></SelectContent></Select><Button onClick={save} className="bg-emerald-600 hover:bg-emerald-700">Guardar usuario</Button></CardContent></Card>
+    <Card><Table><TableHeader><TableRow><TableHead>Nombre</TableHead><TableHead>Correo</TableHead><TableHead>Rol</TableHead><TableHead>Puede iniciar sesión</TableHead><TableHead></TableHead></TableRow></TableHeader><TableBody>{items.map(u=><TableRow key={u.id}><TableCell>{u.name}</TableCell><TableCell>{u.email}</TableCell><TableCell><Badge variant="outline">{u.role}</Badge></TableCell><TableCell>{u.role === 'owner' ? 'Sí, desde variables Vercel' : 'Sí, con correo y contraseña guardados'}</TableCell><TableCell className="text-right">{u.id !== 'owner-env' && <Button size="icon" variant="ghost" onClick={()=>remove(u.id)}><Trash2 className="w-4 h-4 text-rose-600"/></Button>}</TableCell></TableRow>)}</TableBody></Table></Card>
   </div>;
 }
 
